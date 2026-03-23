@@ -7,7 +7,7 @@ from pathlib import Path
 
 import open3d as o3d
 
-from src.clustering import cluster_objects, select_largest_cluster
+from src.clustering import cluster_objects, merge_clusters
 from src.filters import height_filter
 from src.loader import load_point_cloud
 from src.preprocess import remove_noise, voxel_downsample
@@ -52,17 +52,18 @@ def _print_stage(name: str, pcd: o3d.geometry.PointCloud) -> None:
     print(f"{name}: {len(pcd.points)} points")
 
 
-def _select_cluster(
+def _select_target_cloud(
+    filtered_cloud: o3d.geometry.PointCloud,
     clusters: list[o3d.geometry.PointCloud],
     requested_index: int | None,
-) -> tuple[int, o3d.geometry.PointCloud]:
-    if not clusters:
-        raise RuntimeError("No valid clusters remain after filtering.")
-    if requested_index is None:
-        return select_largest_cluster(clusters)
-    if requested_index < 0 or requested_index >= len(clusters):
-        raise IndexError(f"Requested cluster index {requested_index} is out of range for {len(clusters)} clusters.")
-    return requested_index, clusters[requested_index]
+) -> tuple[int, str, o3d.geometry.PointCloud]:
+    if requested_index is not None:
+        if requested_index < 0 or requested_index >= len(clusters):
+            raise IndexError(f"Requested cluster index {requested_index} is out of range for {len(clusters)} clusters.")
+        return requested_index, "manual_cluster", clusters[requested_index]
+    if clusters:
+        return -1, "merged_roi_clusters", merge_clusters(clusters)
+    return -1, "full_filtered_roi", filtered_cloud
 
 
 def main() -> None:
@@ -73,7 +74,6 @@ def main() -> None:
     point_cloud = load_point_cloud(input_path)
     _print_stage("Loaded cloud", point_cloud)
 
-    # ROI first: user picks define the XY footprint so downstream filters only see the target pile neighborhood.
     picked_points = pick_points_for_roi(point_cloud)
     roi_cloud, polygon = filter_by_polygon(
         point_cloud,
@@ -84,15 +84,12 @@ def main() -> None:
     _print_stage("ROI-filtered cloud", roi_cloud)
     print(f"ROI polygon vertices: {len(polygon)}")
 
-    # Downsampling stabilizes RANSAC and DBSCAN while keeping the stockpile geometry.
     downsampled_cloud = voxel_downsample(roi_cloud, voxel_size=args.downsample_voxel)
     _print_stage("Downsampled cloud", downsampled_cloud)
 
-    # Statistical denoising removes isolated scan artifacts that would otherwise form false clusters.
     denoised_cloud = remove_noise(downsampled_cloud)
     _print_stage("Denoised cloud", denoised_cloud)
 
-    # Stronger plane removal isolates the stockpile from the local ground surface.
     ground_cloud, non_ground_cloud, plane_model, _ = remove_ground_plane(
         denoised_cloud,
         distance_threshold=args.plane_threshold,
@@ -104,13 +101,11 @@ def main() -> None:
         f"{plane_model[0]:.4f}x + {plane_model[1]:.4f}y + {plane_model[2]:.4f}z + {plane_model[3]:.4f} = 0"
     )
 
-    # Height filtering removes low residual ground fragments that survive plane segmentation.
     filtered_object_cloud, z_min = height_filter(non_ground_cloud, threshold=args.height_threshold)
     _print_stage("Height-filtered object cloud", filtered_object_cloud)
     print(f"Height filter reference z_min: {z_min:.4f} m")
     print(f"Height threshold: {args.height_threshold:.4f} m")
 
-    # DBSCAN groups dense pile points and suppresses sparse clutter/noise.
     labels, clusters, summaries = cluster_objects(
         filtered_object_cloud,
         eps=args.dbscan_eps,
@@ -120,16 +115,17 @@ def main() -> None:
     print(f"Number of clusters: {len(clusters)}")
     print("Cluster sizes:", [summary.size for summary in summaries])
 
-    selected_index, selected_cluster = _select_cluster(clusters, args.cluster_index)
+    selected_index, selected_strategy, selected_cloud = _select_target_cloud(
+        filtered_object_cloud,
+        clusters,
+        args.cluster_index,
+    )
+    print(f"Selection strategy: {selected_strategy}")
     print(f"Selected cluster index: {selected_index}")
-    print(f"Selected cluster size: {len(selected_cluster.points)}")
-    if args.cluster_index is not None:
-        print("Manual cluster selection override applied.")
-    else:
-        print("Largest cluster selected automatically.")
+    print(f"Selected cloud size: {len(selected_cloud.points)}")
 
-    bbox_volume, bbox = compute_bounding_box_volume(selected_cluster)
-    voxel_volume, _ = compute_voxel_volume(selected_cluster, voxel_size=args.volume_voxel)
+    bbox_volume, bbox = compute_bounding_box_volume(selected_cloud)
+    voxel_volume, _ = compute_voxel_volume(selected_cloud, voxel_size=args.volume_voxel)
 
     print("\nVolume Estimation Results")
     print("-------------------------")
@@ -139,7 +135,7 @@ def main() -> None:
 
     if not args.no_vis:
         show_clusters(filtered_object_cloud, labels)
-        show_pipeline_result(ground_cloud, filtered_object_cloud, selected_cluster, bbox)
+        show_pipeline_result(ground_cloud, filtered_object_cloud, selected_cloud, bbox)
 
 
 if __name__ == "__main__":

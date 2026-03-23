@@ -46,6 +46,8 @@
     lastX: 0,
     lastY: 0,
     interactionMode: 'navigate',
+    selectionKind: 'polygon',
+    selectionBounds: null,
     preview: null,
     ground: null,
     filtered: null,
@@ -99,7 +101,7 @@
       ? 'Navigation mode active.'
       : isPoint
         ? 'Point mode active. Click around the sand footprint.'
-        : 'Box mode active. Drag a rectangle over the pile.';
+        : 'Box mode active. Drag a 2D box; all cloud points inside that region will be included.';
   }
 
   function updatePickUI() {
@@ -313,6 +315,16 @@
     return lower.concat(upper);
   }
 
+  function computeBounds(points) {
+    const xs = points.map((point) => point[0]);
+    const ys = points.map((point) => point[1]);
+    const zs = points.map((point) => point[2]);
+    return {
+      min: [Math.min(...xs), Math.min(...ys), Math.min(...zs)],
+      max: [Math.max(...xs), Math.max(...ys), Math.max(...zs)],
+    };
+  }
+
   async function loadPreview() {
     if (!state.currentFile) {
       setStatus('No point cloud file is available.', true);
@@ -327,6 +339,8 @@
     state.voxels = null;
     state.bbox = null;
     state.pickedPoints = [];
+    state.selectionBounds = null;
+    state.selectionKind = 'polygon';
     state.selectionBox = null;
     updatePickUI();
     updateResults();
@@ -369,6 +383,8 @@
     }
 
     if (best) {
+      state.selectionKind = 'polygon';
+      state.selectionBounds = null;
       state.pickedPoints.push(best.world);
       updatePickUI();
       draw();
@@ -400,16 +416,12 @@
       return;
     }
 
-    const hull = convexHull2D(selectedPoints);
-    if (hull.length < 3) {
-      setStatus('The box selection collapsed to fewer than 3 footprint points. Try a wider box.', true);
-      return;
-    }
-
-    state.pickedPoints = hull;
+    state.selectionKind = 'box';
+    state.selectionBounds = computeBounds(selectedPoints);
+    state.pickedPoints = convexHull2D(selectedPoints);
     updatePickUI();
     draw();
-    setStatus(`Box selection captured ${formatCount(selectedPoints.length)} preview points and reduced them to a ${hull.length}-point footprint.`);
+    setStatus(`Box selection captured ${formatCount(selectedPoints.length)} preview points. All cloud points inside that 3D region will be used.`);
   }
 
   async function analyze() {
@@ -426,6 +438,8 @@
         body: JSON.stringify({
           input_path: state.currentFile,
           picked_points: state.pickedPoints,
+          selection_mode: state.selectionKind,
+          selection_bounds: state.selectionKind === 'box' ? state.selectionBounds : null,
           downsample_voxel: Number(inputs.downsampleVoxel.value),
           volume_voxel: Number(inputs.volumeVoxel.value),
           dbscan_eps: Number(inputs.dbscanEps.value),
@@ -454,13 +468,14 @@
         ['Filtered object points', formatCount(payload.object_points)],
         ['Clusters detected', String(payload.cluster_count)],
         ['Cluster sizes', payload.cluster_sizes.join(', ') || 'none'],
-        ['Selected cluster', String(payload.selected_cluster_index)],
+        ['Selection strategy', payload.selected_strategy],
+        ['Selected cluster', payload.selected_cluster_index < 0 ? 'ROI-driven selection' : String(payload.selected_cluster_index)],
         ['Selected points', formatCount(payload.selected_points)],
         ['Occupied voxels', formatCount(payload.voxel_count)],
         ['BBox volume (comparison)', `${payload.bbox_volume_m3.toFixed(4)} m³`],
         ['Voxel volume (FINAL)', `${payload.voxel_volume_m3.toFixed(4)} m³`],
       ]);
-      setStatus(`Analysis complete. Final estimated sand volume: ${payload.voxel_volume_m3.toFixed(4)} m³.`);
+      setStatus(`Analysis complete. ROI-driven selection used for final estimated sand volume: ${payload.voxel_volume_m3.toFixed(4)} m³.`);
       draw();
     } catch (error) {
       setStatus(error.message || 'Analysis failed.', true);
@@ -575,12 +590,14 @@
   if (boxPickModeButton) {
     boxPickModeButton.addEventListener('click', () => {
       setInteractionMode('box');
-      setStatus('Box selection enabled. Drag a rectangle over the sand pile to generate a footprint.');
+      setStatus('Box selection enabled. Drag a rectangle over the sand pile and all points in that region will be included.');
     });
   }
 
   clearPicksButton.addEventListener('click', () => {
     state.pickedPoints = [];
+    state.selectionBounds = null;
+    state.selectionKind = 'polygon';
     state.selectionBox = null;
     updatePickUI();
     draw();
@@ -603,4 +620,3 @@
     setStatus('No .ply or .pcd files found in the workspace root.', true);
   }
 })();
-  

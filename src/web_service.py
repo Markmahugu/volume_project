@@ -8,11 +8,11 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
-from src.clustering import cluster_objects, select_largest_cluster
+from src.clustering import cluster_objects, merge_clusters
 from src.filters import height_filter
 from src.loader import load_point_cloud
 from src.preprocess import remove_noise, voxel_downsample
-from src.roi import filter_by_polygon
+from src.roi import filter_by_bounds, filter_by_polygon
 from src.segmentation import remove_ground_plane
 from src.volume import compute_bounding_box_volume, compute_voxel_volume, voxel_grid_to_point_cloud
 
@@ -25,6 +25,7 @@ MAX_RESULT_POINTS = 30000
 @dataclass(slots=True)
 class AnalysisSummary:
     selected_cluster_index: int
+    selected_strategy: str
     cluster_count: int
     cluster_sizes: list[int]
     total_points_loaded: int
@@ -112,23 +113,26 @@ def get_preview_payload(input_path: str, voxel_size: float = 0.05) -> dict[str, 
     return payload
 
 
-def _select_cluster(
+def _select_target_cloud(
+    filtered_cloud: o3d.geometry.PointCloud,
     clusters: list[o3d.geometry.PointCloud],
     cluster_index: int | None,
-) -> tuple[int, o3d.geometry.PointCloud]:
-    if not clusters:
-        raise RuntimeError("No valid clusters remain after filtering.")
-    if cluster_index is None:
-        return select_largest_cluster(clusters)
-    if cluster_index < 0 or cluster_index >= len(clusters):
-        raise IndexError(f"Requested cluster index {cluster_index} is out of range for {len(clusters)} clusters.")
-    return cluster_index, clusters[cluster_index]
+) -> tuple[int, str, o3d.geometry.PointCloud]:
+    if cluster_index is not None:
+        if cluster_index < 0 or cluster_index >= len(clusters):
+            raise IndexError(f"Requested cluster index {cluster_index} is out of range for {len(clusters)} clusters.")
+        return cluster_index, "manual_cluster", clusters[cluster_index]
+    if clusters:
+        return -1, "merged_roi_clusters", merge_clusters(clusters)
+    return -1, "full_filtered_roi", filtered_cloud
 
 
 def analyze_selected_region(
     *,
     input_path: str,
     picked_points: list[list[float]],
+    selection_mode: str = "polygon",
+    selection_bounds: dict[str, list[float]] | None = None,
     downsample_voxel: float,
     volume_voxel: float,
     dbscan_eps: float,
@@ -147,12 +151,24 @@ def analyze_selected_region(
     seed_points = np.asarray(picked_points, dtype=float)
 
     point_cloud = load_point_cloud(source_path)
-    roi_cloud, _ = filter_by_polygon(
-        point_cloud,
-        seed_points,
-        padding_xy=roi_padding_xy,
-        padding_z=roi_padding_z,
-    )
+    if selection_mode == "box":
+        if not selection_bounds or "min" not in selection_bounds or "max" not in selection_bounds:
+            raise ValueError("Box selection requires selection bounds.")
+        roi_cloud = filter_by_bounds(
+            point_cloud,
+            np.asarray(selection_bounds["min"], dtype=float),
+            np.asarray(selection_bounds["max"], dtype=float),
+            padding_xy=roi_padding_xy,
+            padding_z=roi_padding_z,
+        )
+    else:
+        roi_cloud, _ = filter_by_polygon(
+            point_cloud,
+            seed_points,
+            padding_xy=roi_padding_xy,
+            padding_z=roi_padding_z,
+        )
+
     downsampled_cloud = voxel_downsample(roi_cloud, voxel_size=downsample_voxel)
     denoised_cloud = remove_noise(downsampled_cloud)
     ground_cloud, non_ground_cloud, plane_model, _ = remove_ground_plane(
@@ -166,14 +182,15 @@ def analyze_selected_region(
         min_points=dbscan_min_points,
         min_cluster_size=min_cluster_size,
     )
-    selected_index, selected_cluster = _select_cluster(clusters, cluster_index)
+    selected_index, selected_strategy, selected_cloud = _select_target_cloud(filtered_cloud, clusters, cluster_index)
 
-    bbox_volume, bbox = compute_bounding_box_volume(selected_cluster)
-    voxel_volume, voxel_grid = compute_voxel_volume(selected_cluster, voxel_size=volume_voxel)
+    bbox_volume, bbox = compute_bounding_box_volume(selected_cloud)
+    voxel_volume, voxel_grid = compute_voxel_volume(selected_cloud, voxel_size=volume_voxel)
     voxel_cloud = voxel_grid_to_point_cloud(voxel_grid)
 
     return AnalysisSummary(
         selected_cluster_index=selected_index,
+        selected_strategy=selected_strategy,
         cluster_count=len(clusters),
         cluster_sizes=[summary.size for summary in summaries],
         total_points_loaded=len(point_cloud.points),
@@ -181,7 +198,7 @@ def analyze_selected_region(
         denoised_points=len(denoised_cloud.points),
         ground_points=len(ground_cloud.points),
         object_points=len(filtered_cloud.points),
-        selected_points=len(selected_cluster.points),
+        selected_points=len(selected_cloud.points),
         voxel_count=len(voxel_grid.get_voxels()),
         z_min=float(z_min),
         plane_model=plane_model,
@@ -191,6 +208,6 @@ def analyze_selected_region(
         bbox_max=bbox.get_max_bound().tolist(),
         ground_cloud_payload=_serialize_point_cloud(ground_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.1, 0.75, 0.2)),
         filtered_cloud_payload=_serialize_point_cloud(filtered_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.9, 0.2, 0.2)),
-        selected_cloud_payload=_serialize_point_cloud(selected_cluster, max_points=MAX_RESULT_POINTS, default_color=(0.15, 0.4, 0.95)),
+        selected_cloud_payload=_serialize_point_cloud(selected_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.15, 0.4, 0.95)),
         voxel_cloud_payload=_serialize_point_cloud(voxel_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.12, 0.86, 1.0)),
     )

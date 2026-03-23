@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -21,9 +22,16 @@ app = FastAPI(title="volume_project web")
 app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 
 
+class SelectionBounds(BaseModel):
+    min: list[float] = Field(min_length=3, max_length=3)
+    max: list[float] = Field(min_length=3, max_length=3)
+
+
 class AnalysisRequest(BaseModel):
     input_path: str
     picked_points: list[list[float]] = Field(min_length=3)
+    selection_mode: Literal["polygon", "box"] = "polygon"
+    selection_bounds: SelectionBounds | None = None
     downsample_voxel: float = 0.02
     volume_voxel: float = 0.02
     dbscan_eps: float = 0.12
@@ -57,12 +65,14 @@ def get_preview(input_path: str, voxel_size: float = 0.05) -> dict[str, object]:
 @app.post("/api/analyze")
 def analyze(request: AnalysisRequest) -> dict[str, object]:
     try:
-        summary = analyze_selected_region(**request.model_dump())
+        payload = request.model_dump()
+        summary = analyze_selected_region(**payload)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {
         "selected_cluster_index": summary.selected_cluster_index,
+        "selected_strategy": summary.selected_strategy,
         "cluster_count": summary.cluster_count,
         "cluster_sizes": summary.cluster_sizes,
         "total_points_loaded": summary.total_points_loaded,
