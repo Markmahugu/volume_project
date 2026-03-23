@@ -4,14 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>volume_project</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260323g" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260324a" />
 </head>
 <body>
   <div class="layout">
     <aside class="sidebar">
       <div>
         <p class="eyebrow">Construction Monitoring</p>
-        <h1>Volume Estimation</h1>
+        <h1>Sand Volume Estimation</h1>
       </div>
 
       <section class="panel">
@@ -44,7 +44,7 @@
           <label>DBSCAN min points<input id="dbscanMinPoints" type="number" min="5" step="1" value="100" /></label>
           <label>Min cluster size<input id="minClusterSize" type="number" min="10" step="10" value="200" /></label>
           <label>Plane threshold<input id="planeThreshold" type="number" min="0.005" step="0.005" value="0.02" /></label>
-          <label>Height threshold<input id="heightThreshold" type="number" min="0.01" step="0.01" value="0.10" /></label>
+          <label>Height threshold<input id="heightThreshold" type="number" min="0.01" step="0.01" value="0.00" /></label>
           <label>ROI padding XY<input id="roiPaddingXY" type="number" min="0.1" step="0.1" value="0.5" /></label>
           <label>ROI padding Z<input id="roiPaddingZ" type="number" min="0.1" step="0.1" value="0.5" /></label>
         </div>
@@ -52,7 +52,7 @@
 
       <section class="panel">
         <h2>Picking</h2>
-        <p class="hint">Use the floating viewer controls to switch between point picking and box selection, then analyze the selected footprint.</p>
+        <p class="hint">Use point picking for a footprint polygon, or use box selection to include all cloud points inside the selected sand region.</p>
         <div id="pickCount">Picked points: 0</div>
         <ol id="pickList"></ol>
       </section>
@@ -98,6 +98,8 @@
   </div>
 
   <script>window.__INITIAL_FILES__ = {{ files | tojson }};</script>
-  <script src="/static/app.js?v=20260323g"></script>
+  <script src="/static/app.js?v=20260324a"></script>
 </body>
 </html>
+
+

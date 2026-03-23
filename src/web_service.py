@@ -9,12 +9,17 @@ import numpy as np
 import open3d as o3d
 
 from src.clustering import cluster_objects, merge_clusters
-from src.filters import height_filter
+from src.filters import build_ground_model, height_filter
 from src.loader import load_point_cloud
-from src.preprocess import remove_noise, voxel_downsample
+from src.preprocess import estimate_mean_point_spacing, remove_noise, voxel_downsample
 from src.roi import filter_by_bounds, filter_by_polygon
 from src.segmentation import remove_ground_plane
-from src.volume import compute_bounding_box_volume, compute_voxel_volume, voxel_grid_to_point_cloud
+from src.volume import (
+    compute_bounding_box_volume,
+    compute_validation_volumes,
+    create_height_normalized_cloud,
+    voxel_grid_to_point_cloud,
+)
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 ALLOWED_EXTENSIONS = {".ply", ".pcd"}
@@ -30,15 +35,29 @@ class AnalysisSummary:
     cluster_sizes: list[int]
     total_points_loaded: int
     roi_points: int
+    downsampled_points: int
     denoised_points: int
     ground_points: int
     object_points: int
     selected_points: int
+    points_removed_by_clustering: int
+    mean_point_spacing: float
+    ground_rmse: float
+    roi_completeness: float
     voxel_count: int
-    z_min: float
+    method_used: str
+    confidence: str
+    error_estimate_percent: float
+    warnings: list[str]
     plane_model: list[float]
     bbox_volume_m3: float
-    voxel_volume_m3: float
+    final_volume_m3: float
+    binary_voxel_volume_m3: float
+    weighted_voxel_volume_m3: float
+    height_map_volume_m3: float
+    mesh_volume_m3: float
+    adaptive_voxel_size: float
+    empty_voxel_percent: float
     bbox_min: list[float]
     bbox_max: list[float]
     ground_cloud_payload: dict[str, object]
@@ -92,6 +111,28 @@ def _serialize_point_cloud(
     }
 
 
+def _score_confidence(
+    *,
+    ground_rmse: float,
+    empty_voxel_percent: float,
+    roi_completeness: float,
+    spacing: float,
+    warnings: list[str],
+) -> tuple[str, float]:
+    estimated_error = (
+        min(ground_rmse * 120.0, 12.0)
+        + min(empty_voxel_percent * 0.15, 12.0)
+        + max(0.0, (0.9 - roi_completeness) * 40.0)
+        + min(spacing * 150.0, 8.0)
+        + min(len(warnings) * 2.0, 8.0)
+    )
+    if estimated_error <= 3.0:
+        return "high", float(estimated_error)
+    if estimated_error <= 7.0:
+        return "medium", float(estimated_error)
+    return "low", float(estimated_error)
+
+
 def list_point_cloud_files() -> list[str]:
     files = []
     for path in WORKSPACE_ROOT.iterdir():
@@ -115,16 +156,25 @@ def get_preview_payload(input_path: str, voxel_size: float = 0.05) -> dict[str, 
 
 def _select_target_cloud(
     filtered_cloud: o3d.geometry.PointCloud,
+    labels: np.ndarray,
     clusters: list[o3d.geometry.PointCloud],
     cluster_index: int | None,
-) -> tuple[int, str, o3d.geometry.PointCloud]:
+    selection_mode: str,
+) -> tuple[int, str, o3d.geometry.PointCloud, np.ndarray]:
     if cluster_index is not None:
         if cluster_index < 0 or cluster_index >= len(clusters):
             raise IndexError(f"Requested cluster index {cluster_index} is out of range for {len(clusters)} clusters.")
-        return cluster_index, "manual_cluster", clusters[cluster_index]
-    if clusters:
-        return -1, "merged_roi_clusters", merge_clusters(clusters)
-    return -1, "full_filtered_roi", filtered_cloud
+        selected_label = sorted([label for label in np.unique(labels) if label >= 0])[cluster_index]
+        selected_mask = labels == selected_label
+        return cluster_index, "manual_cluster", clusters[cluster_index], selected_mask
+
+    if selection_mode == "box":
+        return -1, "box_full_roi", filtered_cloud, np.ones(len(filtered_cloud.points), dtype=bool)
+
+    valid_mask = labels >= 0
+    if np.any(valid_mask):
+        return -1, "merged_roi_clusters", merge_clusters(clusters), valid_mask
+    return -1, "full_filtered_roi", filtered_cloud, np.ones(len(filtered_cloud.points), dtype=bool)
 
 
 def analyze_selected_region(
@@ -160,6 +210,7 @@ def analyze_selected_region(
             np.asarray(selection_bounds["max"], dtype=float),
             padding_xy=roi_padding_xy,
             padding_z=roi_padding_z,
+            full_height=True,
         )
     else:
         roi_cloud, _ = filter_by_polygon(
@@ -169,24 +220,55 @@ def analyze_selected_region(
             padding_z=roi_padding_z,
         )
 
-    downsampled_cloud = voxel_downsample(roi_cloud, voxel_size=downsample_voxel)
+    working_voxel = max(downsample_voxel, estimate_mean_point_spacing(roi_cloud) * 1.5)
+    downsampled_cloud = voxel_downsample(roi_cloud, voxel_size=working_voxel)
     denoised_cloud = remove_noise(downsampled_cloud)
     ground_cloud, non_ground_cloud, plane_model, _ = remove_ground_plane(
         denoised_cloud,
         distance_threshold=plane_threshold,
     )
-    filtered_cloud, z_min = height_filter(non_ground_cloud, threshold=height_threshold)
-    _, clusters, summaries = cluster_objects(
+
+    ground_model = build_ground_model(ground_cloud)
+    filtered_cloud, filtered_heights, ground_rmse = height_filter(
+        non_ground_cloud,
+        ground_model=ground_model,
+        threshold=height_threshold,
+    )
+
+    labels, clusters, summaries, _ = cluster_objects(
         filtered_cloud,
         eps=dbscan_eps,
         min_points=dbscan_min_points,
         min_cluster_size=min_cluster_size,
     )
-    selected_index, selected_strategy, selected_cloud = _select_target_cloud(filtered_cloud, clusters, cluster_index)
+    selected_index, selected_strategy, selected_cloud, selected_mask = _select_target_cloud(
+        filtered_cloud,
+        labels,
+        clusters,
+        cluster_index,
+        selection_mode,
+    )
 
-    bbox_volume, bbox = compute_bounding_box_volume(selected_cloud)
-    voxel_volume, voxel_grid = compute_voxel_volume(selected_cloud, voxel_size=volume_voxel)
+    selected_heights = filtered_heights[selected_mask]
+    normalized_selected_cloud = create_height_normalized_cloud(selected_cloud, selected_heights)
+    validation = compute_validation_volumes(normalized_selected_cloud, fallback_voxel_size=volume_voxel)
+    bbox_volume, bbox = compute_bounding_box_volume(normalized_selected_cloud)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(normalized_selected_cloud, validation.adaptive_voxel_size)
     voxel_cloud = voxel_grid_to_point_cloud(voxel_grid)
+
+    points_removed_by_clustering = max(len(filtered_cloud.points) - sum(summary.size for summary in summaries), 0)
+    roi_completeness = float(len(selected_cloud.points) / max(len(filtered_cloud.points), 1))
+    selected_spacing = estimate_mean_point_spacing(selected_cloud)
+    warnings = list(validation.warnings)
+    if ground_rmse > 0.05:
+        warnings.append("Ground fit RMSE is above 0.05 m; ground estimate is unreliable.")
+    confidence, error_estimate_percent = _score_confidence(
+        ground_rmse=ground_rmse,
+        empty_voxel_percent=validation.voxel_metrics.empty_ratio * 100.0,
+        roi_completeness=roi_completeness,
+        spacing=selected_spacing,
+        warnings=warnings,
+    )
 
     return AnalysisSummary(
         selected_cluster_index=selected_index,
@@ -195,15 +277,29 @@ def analyze_selected_region(
         cluster_sizes=[summary.size for summary in summaries],
         total_points_loaded=len(point_cloud.points),
         roi_points=len(roi_cloud.points),
+        downsampled_points=len(downsampled_cloud.points),
         denoised_points=len(denoised_cloud.points),
         ground_points=len(ground_cloud.points),
         object_points=len(filtered_cloud.points),
         selected_points=len(selected_cloud.points),
-        voxel_count=len(voxel_grid.get_voxels()),
-        z_min=float(z_min),
+        points_removed_by_clustering=points_removed_by_clustering,
+        mean_point_spacing=selected_spacing,
+        ground_rmse=ground_rmse,
+        roi_completeness=roi_completeness,
+        voxel_count=validation.voxel_metrics.occupied_voxels,
+        method_used=validation.method_used,
+        confidence=confidence,
+        error_estimate_percent=error_estimate_percent,
+        warnings=warnings,
         plane_model=plane_model,
         bbox_volume_m3=float(bbox_volume),
-        voxel_volume_m3=float(voxel_volume),
+        final_volume_m3=validation.final_volume_m3,
+        binary_voxel_volume_m3=validation.voxel_volume_m3,
+        weighted_voxel_volume_m3=validation.weighted_voxel_volume_m3,
+        height_map_volume_m3=validation.height_map_volume_m3,
+        mesh_volume_m3=validation.mesh_volume_m3,
+        adaptive_voxel_size=validation.adaptive_voxel_size,
+        empty_voxel_percent=validation.voxel_metrics.empty_ratio * 100.0,
         bbox_min=bbox.get_min_bound().tolist(),
         bbox_max=bbox.get_max_bound().tolist(),
         ground_cloud_payload=_serialize_point_cloud(ground_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.1, 0.75, 0.2)),

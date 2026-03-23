@@ -66,7 +66,7 @@
   }
 
   function updateResults(entries = []) {
-    results.innerHTML = '';
+    results.innerHTML = ''; 
     for (const [label, value] of entries) {
       const dt = document.createElement('dt');
       dt.textContent = label;
@@ -106,7 +106,7 @@
 
   function updatePickUI() {
     pickCount.textContent = `Picked points: ${state.pickedPoints.length}`;
-    pickList.innerHTML = '';
+    pickList.innerHTML = ''; 
     for (let index = 0; index < state.pickedPoints.length; index += 1) {
       const point = state.pickedPoints[index];
       const item = document.createElement('li');
@@ -388,7 +388,7 @@
       state.pickedPoints.push(best.world);
       updatePickUI();
       draw();
-      setStatus(`Picked ${state.pickedPoints.length} point${state.pickedPoints.length === 1 ? '' : 's'} for the ROI footprint.`);
+      setStatus(`Picked ${state.pickedPoints.length} point${state.pickedPoints.length === 1 ? "" : "s"} for the ROI footprint.`);
     }
   }
 
@@ -463,19 +463,37 @@
       state.bbox = payload.bbox;
       updateResults([
         ['ROI points', formatCount(payload.roi_points)],
+        ['Downsampled points', formatCount(payload.downsampled_points)],
         ['Denoised points', formatCount(payload.denoised_points)],
         ['Ground points', formatCount(payload.ground_points)],
         ['Filtered object points', formatCount(payload.object_points)],
+        ['Points removed by clustering', formatCount(payload.points_removed_by_clustering)],
         ['Clusters detected', String(payload.cluster_count)],
         ['Cluster sizes', payload.cluster_sizes.join(', ') || 'none'],
         ['Selection strategy', payload.selected_strategy],
         ['Selected cluster', payload.selected_cluster_index < 0 ? 'ROI-driven selection' : String(payload.selected_cluster_index)],
         ['Selected points', formatCount(payload.selected_points)],
+        ['Mean point spacing', `${payload.mean_point_spacing.toFixed(4)} m`],
+        ['Ground fit RMSE', `${payload.ground_rmse.toFixed(4)} m`],
+        ['ROI completeness', `${(payload.roi_completeness * 100).toFixed(1)}%`],
+        ['Adaptive voxel size', `${payload.adaptive_voxel_size.toFixed(4)} m`],
         ['Occupied voxels', formatCount(payload.voxel_count)],
+        ['Empty voxel ratio', `${payload.empty_voxel_percent.toFixed(2)}%`],
         ['BBox volume (comparison)', `${payload.bbox_volume_m3.toFixed(4)} m³`],
-        ['Voxel volume (FINAL)', `${payload.voxel_volume_m3.toFixed(4)} m³`],
+        ['Binary voxel volume', `${payload.binary_voxel_volume_m3.toFixed(4)} m³`],
+        ['Weighted voxel volume', `${payload.weighted_voxel_volume_m3.toFixed(4)} m³`],
+        ['Height map volume', `${payload.height_map_volume_m3.toFixed(4)} m³`],
+        ['Mesh volume', `${payload.mesh_volume_m3.toFixed(4)} m³`],
+        ['Final volume', `${payload.final_volume_m3.toFixed(4)} m³`],
+        ['Confidence', payload.confidence],
+        ['Estimated error', `${payload.error_estimate_percent.toFixed(2)}%`],
       ]);
-      setStatus(`Analysis complete. ROI-driven selection used for final estimated sand volume: ${payload.voxel_volume_m3.toFixed(4)} m³.`);
+      const strategyLabel = payload.selected_strategy === 'box_full_roi'
+        ? 'Box ROI selection kept all filtered points inside the selected region.'
+        : payload.selected_strategy === 'merged_roi_clusters'
+          ? 'ROI-driven cluster merge selected the pile region.'
+          : 'ROI-driven selection completed.';
+      setStatus(`${strategyLabel} Final estimated sand volume: ${payload.final_volume_m3.toFixed(4)} m³. Method: ${payload.method_used}. Confidence: ${payload.confidence}.`);
       draw();
     } catch (error) {
       setStatus(error.message || 'Analysis failed.', true);
@@ -620,3 +638,12 @@
     setStatus('No .ply or .pcd files found in the workspace root.', true);
   }
 })();
+
+
+
+
+
+
+
+
+

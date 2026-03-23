@@ -38,7 +38,7 @@ class AnalysisRequest(BaseModel):
     dbscan_min_points: int = 100
     min_cluster_size: int = 200
     plane_threshold: float = 0.02
-    height_threshold: float = 0.10
+    height_threshold: float = 0.0
     roi_padding_xy: float = 0.5
     roi_padding_z: float = 0.5
     cluster_index: int | None = None
@@ -77,15 +77,32 @@ def analyze(request: AnalysisRequest) -> dict[str, object]:
         "cluster_sizes": summary.cluster_sizes,
         "total_points_loaded": summary.total_points_loaded,
         "roi_points": summary.roi_points,
+        "downsampled_points": summary.downsampled_points,
         "denoised_points": summary.denoised_points,
         "ground_points": summary.ground_points,
         "object_points": summary.object_points,
         "selected_points": summary.selected_points,
+        "points_removed_by_clustering": summary.points_removed_by_clustering,
+        "mean_point_spacing": summary.mean_point_spacing,
+        "ground_rmse": summary.ground_rmse,
+        "roi_completeness": summary.roi_completeness,
         "voxel_count": summary.voxel_count,
-        "z_min": summary.z_min,
+        "method_used": summary.method_used,
+        "confidence": summary.confidence,
+        "error_estimate_percent": summary.error_estimate_percent,
+        "warnings": summary.warnings,
         "plane_model": summary.plane_model,
         "bbox_volume_m3": summary.bbox_volume_m3,
-        "voxel_volume_m3": summary.voxel_volume_m3,
+        "volume": summary.final_volume_m3,
+        "final_volume": summary.final_volume_m3,
+        "voxel_volume_m3": summary.final_volume_m3,
+        "final_volume_m3": summary.final_volume_m3,
+        "binary_voxel_volume_m3": summary.binary_voxel_volume_m3,
+        "weighted_voxel_volume_m3": summary.weighted_voxel_volume_m3,
+        "height_map_volume_m3": summary.height_map_volume_m3,
+        "mesh_volume_m3": summary.mesh_volume_m3,
+        "adaptive_voxel_size": summary.adaptive_voxel_size,
+        "empty_voxel_percent": summary.empty_voxel_percent,
         "bbox": {"min": summary.bbox_min, "max": summary.bbox_max},
         "ground_cloud": summary.ground_cloud_payload,
         "filtered_cloud": summary.filtered_cloud_payload,
