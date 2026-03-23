@@ -135,9 +135,9 @@ def _score_confidence(
 
 def list_point_cloud_files() -> list[str]:
     files = []
-    for path in WORKSPACE_ROOT.iterdir():
+    for path in WORKSPACE_ROOT.rglob("*"):
         if path.is_file() and path.suffix.lower() in ALLOWED_EXTENSIONS:
-            files.append(path.name)
+            files.append(str(path.relative_to(WORKSPACE_ROOT)))
     return sorted(files)
 
 
@@ -195,7 +195,7 @@ def analyze_selected_region(
     cluster_index: int | None = None,
 ) -> AnalysisSummary:
     if len(picked_points) < 3:
-        raise ValueError("Pick at least 3 points on the sand region before analysis.")
+        raise ValueError("Pick at least 3 points on the target object region before analysis.")
 
     source_path = _resolve_workspace_file(input_path)
     seed_points = np.asarray(picked_points, dtype=float)
@@ -223,17 +223,34 @@ def analyze_selected_region(
     working_voxel = max(downsample_voxel, estimate_mean_point_spacing(roi_cloud) * 1.5)
     downsampled_cloud = voxel_downsample(roi_cloud, voxel_size=working_voxel)
     denoised_cloud = remove_noise(downsampled_cloud)
-    ground_cloud, non_ground_cloud, plane_model, _ = remove_ground_plane(
-        denoised_cloud,
-        distance_threshold=plane_threshold,
-    )
 
-    ground_model = build_ground_model(ground_cloud)
-    filtered_cloud, filtered_heights, ground_rmse = height_filter(
-        non_ground_cloud,
-        ground_model=ground_model,
-        threshold=height_threshold,
-    )
+    direct_object_mode = False
+    pre_selection_warnings: list[str] = []
+    try:
+        ground_cloud, non_ground_cloud, plane_model, _ = remove_ground_plane(
+            denoised_cloud,
+            distance_threshold=plane_threshold,
+        )
+        ground_model = build_ground_model(ground_cloud)
+        filtered_cloud, filtered_heights, ground_rmse = height_filter(
+            non_ground_cloud,
+            ground_model=ground_model,
+            threshold=height_threshold,
+        )
+    except RuntimeError as exc:
+        if "sufficiently horizontal" not in str(exc):
+            raise
+        direct_object_mode = True
+        pre_selection_warnings.append(
+            "No horizontal ground plane detected; analyzing the selected object geometry directly."
+        )
+        ground_cloud = o3d.geometry.PointCloud()
+        non_ground_cloud = denoised_cloud
+        z_min = float(np.asarray(denoised_cloud.points)[:, 2].min())
+        plane_model = [0.0, 0.0, 1.0, -z_min]
+        filtered_cloud = denoised_cloud
+        filtered_heights = np.asarray(filtered_cloud.points)[:, 2] - z_min
+        ground_rmse = 0.0
 
     labels, clusters, summaries, _ = cluster_objects(
         filtered_cloud,
@@ -250,17 +267,17 @@ def analyze_selected_region(
     )
 
     selected_heights = filtered_heights[selected_mask]
-    normalized_selected_cloud = create_height_normalized_cloud(selected_cloud, selected_heights)
-    validation = compute_validation_volumes(normalized_selected_cloud, fallback_voxel_size=volume_voxel)
-    bbox_volume, bbox = compute_bounding_box_volume(normalized_selected_cloud)
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(normalized_selected_cloud, validation.adaptive_voxel_size)
+    analysis_cloud = selected_cloud if direct_object_mode else create_height_normalized_cloud(selected_cloud, selected_heights)
+    validation = compute_validation_volumes(analysis_cloud, fallback_voxel_size=volume_voxel)
+    bbox_volume, bbox = compute_bounding_box_volume(analysis_cloud)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(analysis_cloud, validation.adaptive_voxel_size)
     voxel_cloud = voxel_grid_to_point_cloud(voxel_grid)
 
     points_removed_by_clustering = max(len(filtered_cloud.points) - sum(summary.size for summary in summaries), 0)
     roi_completeness = float(len(selected_cloud.points) / max(len(filtered_cloud.points), 1))
     selected_spacing = estimate_mean_point_spacing(selected_cloud)
-    warnings = list(validation.warnings)
-    if ground_rmse > 0.05:
+    warnings = list(pre_selection_warnings) + list(validation.warnings)
+    if (not direct_object_mode) and ground_rmse > 0.05:
         warnings.append("Ground fit RMSE is above 0.05 m; ground estimate is unreliable.")
     confidence, error_estimate_percent = _score_confidence(
         ground_rmse=ground_rmse,
@@ -302,7 +319,9 @@ def analyze_selected_region(
         empty_voxel_percent=validation.voxel_metrics.empty_ratio * 100.0,
         bbox_min=bbox.get_min_bound().tolist(),
         bbox_max=bbox.get_max_bound().tolist(),
-        ground_cloud_payload=_serialize_point_cloud(ground_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.1, 0.75, 0.2)),
+        ground_cloud_payload=_serialize_point_cloud(ground_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.1, 0.75, 0.2)) if len(ground_cloud.points) > 0 else {
+            "positions": [], "colors": [], "point_count": 0, "bbox": {"min": [0, 0, 0], "max": [0, 0, 0]}
+        },
         filtered_cloud_payload=_serialize_point_cloud(filtered_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.9, 0.2, 0.2)),
         selected_cloud_payload=_serialize_point_cloud(selected_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.15, 0.4, 0.95)),
         voxel_cloud_payload=_serialize_point_cloud(voxel_cloud, max_points=MAX_RESULT_POINTS, default_color=(0.12, 0.86, 1.0)),

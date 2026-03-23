@@ -9,6 +9,8 @@ from matplotlib.path import Path
 
 MIN_Z_SPAN = 0.25
 MAX_ROI_VOLUME_M3 = 50.0
+ROI_COLOR = [0.15, 0.4, 0.95]  # Blue color for ROI visualization
+PICKED_POINT_COLOR = [1.0, 0.6, 0.2]  # Orange color for picked points
 
 
 def _order_polygon_vertices(points_xy: np.ndarray) -> np.ndarray:
@@ -236,4 +238,203 @@ def compute_seed_center(picked_points: np.ndarray) -> np.ndarray:
         raise ValueError("No picked points were provided.")
 
     return picked_points.mean(axis=0)
+
+
+def create_roi_visualization(
+    pcd: o3d.geometry.PointCloud,
+    picked_points: np.ndarray,
+    polygon: np.ndarray,
+    padding_xy: float = 0.5,
+    padding_z: float = 0.5,
+) -> tuple[o3d.geometry.PointCloud, o3d.geometry.PointCloud, o3d.geometry.TriangleMesh]:
+    """Create visualizations for the ROI selection process.
+    
+    Returns:
+        tuple: (picked_points_cloud, roi_polygon_mesh, roi_volume_mesh)
+    """
+    if picked_points.shape[0] < 3:
+        raise ValueError("Need at least 3 picked points for visualization.")
+    
+    # Create picked points visualization
+    picked_cloud = o3d.geometry.PointCloud()
+    picked_cloud.points = o3d.utility.Vector3dVector(picked_points)
+    picked_cloud.paint_uniform_color(PICKED_POINT_COLOR)
+    
+    # Create ROI polygon visualization
+    polygon_3d = np.column_stack([polygon, np.full(polygon.shape[0], picked_points[:, 2].mean())])
+    polygon_lines = []
+    for i in range(len(polygon_3d)):
+        polygon_lines.append([i, (i + 1) % len(polygon_3d)])
+    
+    polygon_mesh = o3d.geometry.LineSet()
+    polygon_mesh.points = o3d.utility.Vector3dVector(polygon_3d)
+    polygon_mesh.lines = o3d.utility.Vector2iVector(polygon_lines)
+    polygon_mesh.paint_uniform_color(ROI_COLOR)
+    
+    # Create ROI volume visualization (extruded polygon)
+    z_values = np.asarray(picked_points[:, 2], dtype=float)
+    z_span = max(float(z_values.max() - z_values.min()), MIN_Z_SPAN)
+    z_min = float(z_values.min() - max(padding_z, z_span * 2.0))
+    z_max = float(z_values.max() + max(padding_z, z_span))
+    
+    # Create top and bottom polygons
+    bottom_polygon = np.column_stack([polygon, np.full(polygon.shape[0], z_min)])
+    top_polygon = np.column_stack([polygon, np.full(polygon.shape[0], z_max)])
+    
+    # Create side walls
+    vertices = np.vstack([bottom_polygon, top_polygon])
+    faces = []
+    
+    # Bottom face
+    if len(polygon) >= 3:
+        for i in range(1, len(polygon) - 1):
+            faces.append([0, i, i + 1])
+    
+    # Top face
+    offset = len(polygon)
+    if len(polygon) >= 3:
+        for i in range(1, len(polygon) - 1):
+            faces.append([offset, offset + i + 1, offset + i])
+    
+    # Side walls
+    n = len(polygon)
+    for i in range(n):
+        next_i = (i + 1) % n
+        faces.extend([
+            [i, next_i, next_i + n],
+            [i, next_i + n, i + n]
+        ])
+    
+    volume_mesh = o3d.geometry.TriangleMesh()
+    volume_mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    volume_mesh.triangles = o3d.utility.Vector3iVector(faces)
+    volume_mesh.paint_uniform_color([0.15, 0.4, 0.95])
+    volume_mesh.compute_vertex_normals()
+    
+    return picked_cloud, polygon_mesh, volume_mesh
+
+
+def validate_roi_selection(
+    pcd: o3d.geometry.PointCloud,
+    picked_points: np.ndarray,
+    polygon: np.ndarray,
+    min_points: int = 100,
+    max_points: int = 1000000,
+) -> dict[str, object]:
+    """Validate the ROI selection and provide feedback.
+    
+    Returns:
+        dict: Validation results with keys:
+            - 'valid': bool
+            - 'point_count': int
+            - 'volume_estimate': float
+            - 'warnings': list[str]
+            - 'suggestions': list[str]
+    """
+    if picked_points.shape[0] < 3:
+        return {
+            'valid': False,
+            'point_count': 0,
+            'volume_estimate': 0.0,
+            'warnings': ['Need at least 3 picked points'],
+            'suggestions': ['Pick at least 3 points around the sand pile']
+        }
+    
+    # Estimate points in ROI
+    all_points = np.asarray(pcd.points)
+    inside_xy = Path(polygon).contains_points(all_points[:, :2], radius=1e-9)
+    point_count = np.sum(inside_xy)
+    
+    # Estimate volume
+    if point_count > 0:
+        roi_points = all_points[inside_xy]
+        extent = roi_points.max(axis=0) - roi_points.min(axis=0)
+        volume_estimate = float(np.prod(extent))
+    else:
+        volume_estimate = 0.0
+    
+    warnings = []
+    suggestions = []
+    
+    if point_count < min_points:
+        warnings.append(f"ROI contains only {point_count} points (minimum recommended: {min_points})")
+        suggestions.append("Expand the ROI to include more points")
+    
+    if point_count > max_points:
+        warnings.append(f"ROI contains {point_count} points (may be too large)")
+        suggestions.append("Consider making the ROI smaller for better performance")
+    
+    if volume_estimate > MAX_ROI_VOLUME_M3:
+        warnings.append(f"ROI volume estimate ({volume_estimate:.2f} m³) is very large")
+        suggestions.append("ROI may be too large for accurate volume estimation")
+    
+    # Check polygon quality
+    if len(polygon) >= 3:
+        # Check for self-intersections (simple check)
+        from scipy.spatial.distance import pdist
+        distances = pdist(polygon)
+        min_distance = np.min(distances) if len(distances) > 0 else 0
+        if min_distance < 1e-6:
+            warnings.append("Some picked points are too close together")
+            suggestions.append("Spread picked points more evenly around the pile")
+    
+    return {
+        'valid': len(warnings) == 0,
+        'point_count': int(point_count),
+        'volume_estimate': volume_estimate,
+        'warnings': warnings,
+        'suggestions': suggestions
+    }
+
+
+def interactive_roi_refinement(
+    pcd: o3d.geometry.PointCloud,
+    initial_picked_points: np.ndarray,
+    window_name: str = "ROI Refinement",
+) -> np.ndarray:
+    """Allow interactive refinement of the ROI selection.
+    
+    Returns:
+        np.ndarray: Refined picked points
+    """
+    if initial_picked_points.shape[0] < 3:
+        raise ValueError("Need at least 3 initial picked points.")
+    
+    current_points = initial_picked_points.copy()
+    
+    # Create initial visualization
+    polygon = compute_polygon_from_picks(current_points)
+    picked_cloud, polygon_mesh, volume_mesh = create_roi_visualization(pcd, current_points, polygon)
+    
+    # Create base point cloud visualization
+    display_cloud = o3d.geometry.PointCloud(pcd)
+    display_cloud.paint_uniform_color([0.8, 0.8, 0.8])  # Gray for base cloud
+    
+    # Combine all geometries
+    geometries = [display_cloud, picked_cloud, polygon_mesh, volume_mesh]
+    
+    print("\nROI Refinement Mode")
+    print("-------------------")
+    print("1. Left-click on the base cloud to add new points")
+    print("2. Right-click on existing picked points to remove them")
+    print("3. Press 'r' to reset selection")
+    print("4. Press 'q' to accept current selection")
+    print("5. Use mouse to rotate/pan/zoom the view")
+    
+    # Simple interactive refinement (for now, just return initial points)
+    # In a full implementation, this would use VisualizerWithEditing
+    print(f"Current selection: {len(current_points)} points")
+    validation = validate_roi_selection(pcd, current_points, polygon)
+    
+    if validation['warnings']:
+        print("Warnings:")
+        for warning in validation['warnings']:
+            print(f"  - {warning}")
+    
+    if validation['suggestions']:
+        print("Suggestions:")
+        for suggestion in validation['suggestions']:
+            print(f"  - {suggestion}")
+    
+    return current_points
 

@@ -4,14 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>volume_project</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260324a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260324c" />
 </head>
 <body>
   <div class="layout">
     <aside class="sidebar">
       <div>
-        <p class="eyebrow">Construction Monitoring</p>
-        <h1>Sand Volume Estimation</h1>
+        <p class="eyebrow">3D Volume Tools</p>
+        <h1>Object Volume Estimation</h1>
       </div>
 
       <section class="panel">
@@ -32,7 +32,10 @@
           Preview voxel size
           <input id="previewVoxel" type="number" min="0.01" step="0.01" value="0.05" />
         </label>
-        <button id="loadPreviewButton" class="primary" {% if not files %}disabled{% endif %}>Load Preview</button>
+        <div class="floating-actions">
+          <button id="refreshFilesButton" class="ghost">Refresh Files</button>
+          <button id="loadPreviewButton" class="primary" {% if not files %}disabled{% endif %}>Load Preview</button>
+        </div>
       </section>
 
       <section class="panel">
@@ -52,7 +55,7 @@
 
       <section class="panel">
         <h2>Picking</h2>
-        <p class="hint">Use point picking for a footprint polygon, or use box selection to include all cloud points inside the selected sand region.</p>
+        <p class="hint">Use point picking for a footprint polygon, or use box selection to include all cloud points inside the selected object region.</p>
         <div id="pickCount">Picked points: 0</div>
         <ol id="pickList"></ol>
       </section>
@@ -71,7 +74,7 @@
         <span>Wheel: zoom</span>
         <span>Ground: green</span>
         <span>Filtered object: red</span>
-        <span>Selected pile: blue</span>
+        <span>Selected object: blue</span>
       </div>
       <div class="viewer-stage">
         <canvas id="viewerCanvas"></canvas>
@@ -89,7 +92,7 @@
             <div class="floating-title">Actions</div>
             <div class="floating-actions">
               <button id="clearPicksButton" class="ghost">Clear Picks</button>
-              <button id="analyzeButton" class="primary" disabled>Analyze Selected Region</button>
+              <button id="analyzeButton" class="primary" disabled>Analyze Selected Object</button>
             </div>
           </div>
         </div>
@@ -98,8 +101,6 @@
   </div>
 
   <script>window.__INITIAL_FILES__ = {{ files | tojson }};</script>
-  <script src="/static/app.js?v=20260324a"></script>
+  <script src="/static/app.js?v=20260324c"></script>
 </body>
 </html>
-
-

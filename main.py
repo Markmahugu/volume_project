@@ -1,4 +1,4 @@
-"""Entry point for robust sand volume estimation from a 3D point cloud."""
+"""Entry point for robust object volume estimation from a 3D point cloud."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.loader import load_point_cloud
 from src.preprocess import estimate_mean_point_spacing, remove_noise, voxel_downsample
 from src.roi import filter_by_polygon
 from src.segmentation import remove_ground_plane
-from src.visualization import pick_points_for_roi, show_clusters, show_pipeline_result
+from src.visualization import pick_points_for_roi, show_clusters, show_pipeline_result, show_roi_selection, show_roi_validation
 from src.volume import compute_bounding_box_volume, compute_validation_volumes, create_height_normalized_cloud
 
 
@@ -33,7 +33,7 @@ ORIGINAL_VOLUME_REFERENCE_M3 = 1.8367
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Estimate sand volume from a PLY or PCD point cloud using a guided ROI and robust filtering."
+        description="Estimate object volume from a PLY or PCD point cloud using a guided ROI and robust filtering."
     )
     parser.add_argument("--input", default=DEFAULT_INPUT, help="Path to the input point cloud file (.ply or .pcd).")
     parser.add_argument("--downsample-voxel", type=float, default=DEFAULT_DOWNSAMPLE_VOXEL)
@@ -102,6 +102,32 @@ def main() -> None:
     _print_stage("Loaded cloud", point_cloud)
 
     picked_points = pick_points_for_roi(point_cloud)
+    
+    # Validate ROI selection
+    from src.roi import validate_roi_selection
+    validation_result = validate_roi_selection(point_cloud, picked_points, picked_points[:, :2])
+    
+    print(f"\nROI Validation:")
+    print(f"  Points picked: {len(picked_points)}")
+    print(f"  Estimated points in ROI: {validation_result['point_count']:,}")
+    print(f"  Estimated volume: {validation_result['volume_estimate']:.4f} m³")
+    
+    if validation_result['warnings']:
+        print("  Warnings:")
+        for warning in validation_result['warnings']:
+            print(f"    ⚠️  {warning}")
+    
+    if validation_result['suggestions']:
+        print("  Suggestions:")
+        for suggestion in validation_result['suggestions']:
+            print(f"    💡 {suggestion}")
+    
+    # Show enhanced ROI visualization
+    if not args.no_vis:
+        show_roi_selection(point_cloud, picked_points, picked_points[:, :2], 
+                          padding_xy=args.roi_padding_xy, padding_z=args.roi_padding_z)
+        show_roi_validation(point_cloud, picked_points, validation_result)
+    
     roi_cloud, polygon = filter_by_polygon(
         point_cloud,
         picked_points,
@@ -194,7 +220,7 @@ def main() -> None:
     print(f"Weighted Voxel Volume:           {validation.weighted_voxel_volume_m3:.4f} m³")
     print(f"Height Map Volume:               {validation.height_map_volume_m3:.4f} m³")
     print(f"Mesh Volume:                     {validation.mesh_volume_m3:.4f} m³")
-    print(f"Final Estimated Sand Volume:     {validation.final_volume_m3:.4f} m³")
+    print(f"Final Estimated Object Volume:   {validation.final_volume_m3:.4f} m³")
     print(f"Method Used:                     {validation.method_used}")
     print(f"Difference from 1.8367 m³:       {validation.final_volume_m3 - ORIGINAL_VOLUME_REFERENCE_M3:+.4f} m³")
     print(f"Confidence:                      {confidence}")
@@ -212,3 +238,4 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"Error: {exc}")
         raise SystemExit(1) from exc
+

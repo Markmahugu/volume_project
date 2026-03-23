@@ -2,6 +2,7 @@
   const canvas = document.getElementById('viewerCanvas');
   const viewerStage = document.querySelector('.viewer-stage');
   const fileSelect = document.getElementById('fileSelect');
+  const refreshFilesButton = document.getElementById('refreshFilesButton');
   const loadPreviewButton = document.getElementById('loadPreviewButton');
   const navigateModeButton = document.getElementById('navigateModeButton');
   const pointPickModeButton = document.getElementById('pointPickModeButton');
@@ -64,6 +65,49 @@
     status.textContent = message;
     status.style.color = isError ? '#b42318' : '#6e6254';
   }
+  function updateFileOptions(files) {
+    fileSelect.innerHTML = '';
+    if (!files.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No point cloud files found';
+      fileSelect.appendChild(option);
+      loadPreviewButton.disabled = true;
+      state.currentFile = '';
+      return;
+    }
+
+    for (const file of files) {
+      const option = document.createElement('option');
+      option.value = file;
+      option.textContent = file;
+      fileSelect.appendChild(option);
+    }
+
+    if (state.currentFile && files.includes(state.currentFile)) {
+      fileSelect.value = state.currentFile;
+    } else {
+      state.currentFile = files[0];
+      fileSelect.value = state.currentFile;
+    }
+    loadPreviewButton.disabled = false;
+  }
+
+  async function refreshFiles() {
+    setStatus('Refreshing dataset list...');
+    try {
+      const response = await fetch('/api/files');
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || 'Failed to refresh file list.');
+      }
+      const files = Array.isArray(payload.files) ? payload.files : [];
+      updateFileOptions(files);
+      setStatus(files.length ? `Dataset list refreshed. Selected: ${state.currentFile}.` : 'No .ply or .pcd files found.', !files.length);
+    } catch (error) {
+      setStatus(error.message || 'Failed to refresh file list.', true);
+    }
+  }
 
   function updateResults(entries = []) {
     results.innerHTML = ''; 
@@ -100,7 +144,7 @@
     selectionModeLabel.textContent = isNavigate
       ? 'Navigation mode active.'
       : isPoint
-        ? 'Point mode active. Click around the sand footprint.'
+        ? 'Point mode active. Click around the object footprint.'
         : 'Box mode active. Drag a 2D box; all cloud points inside that region will be included.';
   }
 
@@ -403,7 +447,7 @@
     const bottom = Math.max(selectionBox.y, selectionBox.y + selectionBox.height);
 
     if ((right - left) < 8 || (bottom - top) < 8) {
-      setStatus('Draw a larger box to capture the sand pile footprint.', true);
+      setStatus('Draw a larger box to capture the object footprint.', true);
       return;
     }
 
@@ -426,7 +470,7 @@
 
   async function analyze() {
     if (state.pickedPoints.length < 3) {
-      setStatus('Pick at least 3 points around the sand pile footprint before analysis.', true);
+      setStatus('Pick at least 3 points around the object footprint before analysis.', true);
       return;
     }
 
@@ -493,7 +537,7 @@
         : payload.selected_strategy === 'merged_roi_clusters'
           ? 'ROI-driven cluster merge selected the pile region.'
           : 'ROI-driven selection completed.';
-      setStatus(`${strategyLabel} Final estimated sand volume: ${payload.final_volume_m3.toFixed(4)} m³. Method: ${payload.method_used}. Confidence: ${payload.confidence}.`);
+      setStatus(`${strategyLabel} Estimated object volume: ${payload.final_volume_m3.toFixed(4)} m³. Method: ${payload.method_used}. Confidence: ${payload.confidence}.${payload.warnings && payload.warnings.length ? ` Warning: ${payload.warnings[0]}` : ""}`);
       draw();
     } catch (error) {
       setStatus(error.message || 'Analysis failed.', true);
@@ -601,14 +645,14 @@
   if (pointPickModeButton) {
     pointPickModeButton.addEventListener('click', () => {
       setInteractionMode('point');
-      setStatus('Point pick mode enabled. Click around the sand pile footprint.');
+      setStatus('Point pick mode enabled. Click around the object footprint.');
     });
   }
 
   if (boxPickModeButton) {
     boxPickModeButton.addEventListener('click', () => {
       setInteractionMode('box');
-      setStatus('Box selection enabled. Drag a rectangle over the sand pile and all points in that region will be included.');
+      setStatus('Box selection enabled. Drag a rectangle over the target object and all points in that region will be included.');
     });
   }
 
@@ -623,6 +667,9 @@
   });
 
   analyzeButton.addEventListener('click', analyze);
+  if (refreshFilesButton) {
+    refreshFilesButton.addEventListener('click', refreshFiles);
+  }
   loadPreviewButton.addEventListener('click', loadPreview);
   fileSelect.addEventListener('change', () => {
     state.currentFile = fileSelect.value;
@@ -638,6 +685,10 @@
     setStatus('No .ply or .pcd files found in the workspace root.', true);
   }
 })();
+
+
+
+
 
 
 

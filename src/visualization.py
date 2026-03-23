@@ -195,3 +195,79 @@ def show_pipeline_result(
     )
     geometries.append(frame)
     _draw_geometries_with_camera(geometries, selected_cluster, window_name, point_size=4.0)
+
+
+def show_roi_selection(
+    pcd: o3d.geometry.PointCloud,
+    picked_points: np.ndarray,
+    polygon: np.ndarray,
+    padding_xy: float = 0.5,
+    padding_z: float = 0.5,
+    window_name: str = "ROI Selection",
+) -> None:
+    """Show the ROI selection with enhanced visual feedback."""
+    from src.roi import create_roi_visualization
+    
+    if picked_points.shape[0] < 3:
+        raise ValueError("Need at least 3 picked points for ROI visualization.")
+    
+    # Create ROI visualizations
+    picked_cloud, polygon_mesh, volume_mesh = create_roi_visualization(
+        pcd, picked_points, polygon, padding_xy, padding_z
+    )
+    
+    # Create base point cloud visualization (downsampled for performance)
+    display_cloud = _apply_uniform_color(_downsample_for_display(pcd), (0.8, 0.8, 0.8))
+    
+    geometries = [display_cloud, picked_cloud, polygon_mesh, volume_mesh]
+    
+    print(f"\nROI Selection Preview")
+    print(f"---------------------")
+    print(f"Picked points: {len(picked_points)}")
+    print(f"Polygon vertices: {len(polygon)}")
+    print(f"ROI visualization includes:")
+    print(f"  - Gray base cloud (downsampled)")
+    print(f"  - Orange picked points")
+    print(f"  - Blue ROI polygon outline")
+    print(f"  - Blue ROI volume mesh")
+    
+    _draw_geometries_with_camera(geometries, pcd, window_name, point_size=3.0)
+
+
+def show_roi_validation(
+    pcd: o3d.geometry.PointCloud,
+    picked_points: np.ndarray,
+    validation_result: dict,
+    window_name: str = "ROI Validation",
+) -> None:
+    """Show ROI validation results with visual feedback."""
+    from src.roi import compute_polygon_from_picks, create_roi_visualization
+    
+    if picked_points.shape[0] < 3:
+        raise ValueError("Need at least 3 picked points for validation.")
+    
+    polygon = compute_polygon_from_picks(picked_points)
+    picked_cloud, polygon_mesh, volume_mesh = create_roi_visualization(pcd, picked_points, polygon)
+    
+    # Create base point cloud visualization
+    display_cloud = _apply_uniform_color(_downsample_for_display(pcd), (0.8, 0.8, 0.8))
+    
+    geometries = [display_cloud, picked_cloud, polygon_mesh, volume_mesh]
+    
+    print(f"\nROI Validation Results")
+    print(f"----------------------")
+    print(f"Selection valid: {'Yes' if validation_result['valid'] else 'No'}")
+    print(f"Point count: {validation_result['point_count']:,}")
+    print(f"Volume estimate: {validation_result['volume_estimate']:.4f} m³")
+    
+    if validation_result['warnings']:
+        print(f"\nWarnings:")
+        for warning in validation_result['warnings']:
+            print(f"  ⚠️  {warning}")
+    
+    if validation_result['suggestions']:
+        print(f"\nSuggestions:")
+        for suggestion in validation_result['suggestions']:
+            print(f"  💡 {suggestion}")
+    
+    _draw_geometries_with_camera(geometries, pcd, window_name, point_size=3.0)

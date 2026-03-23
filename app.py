@@ -1,4 +1,4 @@
-"""FastAPI application for browser-based sand volume estimation."""
+"""FastAPI application for browser-based object volume estimation."""
 
 from __future__ import annotations
 
@@ -109,3 +109,4 @@ def analyze(request: AnalysisRequest) -> dict[str, object]:
         "selected_cloud": summary.selected_cloud_payload,
         "voxel_cloud": summary.voxel_cloud_payload,
     }
+
