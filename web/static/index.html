@@ -1,0 +1,109 @@
+
+`web/templates/index.html`
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>volume_project</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260323e" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div>
+        <p class="eyebrow">Construction Monitoring</p>
+        <h1>Sand Volume Estimation</h1>
+        <p class="lede">
+          Offline-friendly browser workflow for previewing a point cloud, isolating a sand-pile ROI, and estimating volume from the cleaned pile geometry only.
+        </p>
+      </div>
+
+      <section class="panel">
+        <h2>Dataset</h2>
+        <label>
+          Point cloud
+          <select id="fileSelect">
+            {% if files %}
+              {% for file_name in files %}
+              <option value="{{ file_name }}">{{ file_name }}</option>
+              {% endfor %}
+            {% else %}
+              <option value="">No point cloud files found</option>
+            {% endif %}
+          </select>
+        </label>
+        <label>
+          Preview voxel size
+          <input id="previewVoxel" type="number" min="0.01" step="0.01" value="0.05" />
+        </label>
+        <button id="loadPreviewButton" class="primary" {% if not files %}disabled{% endif %}>Load Preview</button>
+      </section>
+
+      <section class="panel">
+        <h2>Analysis Parameters</h2>
+        <div class="grid">
+          <label>Downsample voxel<input id="downsampleVoxel" type="number" min="0.005" step="0.005" value="0.02" /></label>
+          <label>Volume voxel<input id="volumeVoxel" type="number" min="0.005" step="0.005" value="0.02" /></label>
+          <label>DBSCAN eps<input id="dbscanEps" type="number" min="0.01" step="0.01" value="0.12" /></label>
+          <label>DBSCAN min points<input id="dbscanMinPoints" type="number" min="5" step="1" value="100" /></label>
+          <label>Min cluster size<input id="minClusterSize" type="number" min="10" step="10" value="200" /></label>
+          <label>Plane threshold<input id="planeThreshold" type="number" min="0.005" step="0.005" value="0.02" /></label>
+          <label>Height threshold<input id="heightThreshold" type="number" min="0.01" step="0.01" value="0.10" /></label>
+          <label>ROI padding XY<input id="roiPaddingXY" type="number" min="0.1" step="0.1" value="0.5" /></label>
+          <label>ROI padding Z<input id="roiPaddingZ" type="number" min="0.1" step="0.1" value="0.5" /></label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Picking</h2>
+        <p class="hint">Use the floating viewer controls to switch between point picking and box selection, then analyze the selected footprint.</p>
+        <div id="pickCount">Picked points: 0</div>
+        <ol id="pickList"></ol>
+      </section>
+
+      <section class="panel results-panel">
+        <h2>Results</h2>
+        <div id="status">Ready. Load a preview to begin.</div>
+        <dl id="results"></dl>
+      </section>
+    </aside>
+
+    <main class="viewer-shell">
+      <div class="viewer-toolbar">
+        <span>Left drag: orbit</span>
+        <span>Right drag: pan</span>
+        <span>Wheel: zoom</span>
+        <span>Ground: green</span>
+        <span>Filtered object: red</span>
+        <span>Selected pile: blue</span>
+      </div>
+      <div class="viewer-stage">
+        <canvas id="viewerCanvas"></canvas>
+        <div class="viewer-float-ui">
+          <div class="floating-panel floating-panel-primary">
+            <div class="floating-title">Selection</div>
+            <div class="floating-actions">
+              <button id="navigateModeButton" class="ghost is-active">Navigate</button>
+              <button id="pointPickModeButton">Point Pick</button>
+              <button id="boxPickModeButton">Box Select</button>
+            </div>
+            <div id="selectionModeLabel" class="floating-hint">Navigation mode active.</div>
+          </div>
+          <div class="floating-panel">
+            <div class="floating-title">Actions</div>
+            <div class="floating-actions">
+              <button id="clearPicksButton" class="ghost">Clear Picks</button>
+              <button id="analyzeButton" class="primary" disabled>Analyze Selected Region</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>window.__INITIAL_FILES__ = {{ files | tojson }};</script>
+  <script src="/static/app.js?v=20260323e"></script>
+</body>
+</html>

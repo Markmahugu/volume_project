@@ -1,3 +1,6 @@
 open3d>=0.18.0
 numpy>=1.24.0
 matplotlib>=3.7.0
+fastapi>=0.115.0
+uvicorn>=0.30.0
+jinja2>=3.1.0
