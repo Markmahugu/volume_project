@@ -99,6 +99,13 @@ label {
   color: var(--muted);
 }
 
+.checkbox-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
 input,
 select,
 button {
@@ -165,18 +172,21 @@ button:disabled {
   font-weight: 700;
 }
 
-.results-panel dl {
+.results-panel dl,
+.compact-metrics {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px 12px;
   margin: 16px 0 0;
 }
 
-.results-panel dt {
+.results-panel dt,
+.compact-metrics dt {
   color: var(--muted);
 }
 
-.results-panel dd {
+.results-panel dd,
+.compact-metrics dd {
   margin: 0;
   font-weight: 700;
 }
@@ -220,7 +230,8 @@ button:disabled {
 }
 
 .viewer-stage.mode-point #viewerCanvas,
-.viewer-stage.mode-box #viewerCanvas {
+.viewer-stage.mode-box #viewerCanvas,
+.viewer-stage.mode-cuboid #viewerCanvas {
   cursor: crosshair;
 }
 
@@ -254,7 +265,7 @@ button:disabled {
 }
 
 .floating-panel-primary {
-  max-width: 520px;
+  max-width: 560px;
 }
 
 .floating-title {

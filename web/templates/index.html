@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>volume_project</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260324c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260324e" />
 </head>
 <body>
   <div class="layout">
@@ -54,10 +54,19 @@
       </section>
 
       <section class="panel">
-        <h2>Picking</h2>
-        <p class="hint">Use point picking for a footprint polygon, or use box selection to include all cloud points inside the selected object region.</p>
+        <h2>Selection</h2>
+        <p class="hint">Use point picks for a footprint, 2D box selection for a quick crop, or Cuboid Mode for a rotatable 3D ROI with live stats.</p>
         <div id="pickCount">Picked points: 0</div>
         <ol id="pickList"></ol>
+      </section>
+
+      <section class="panel">
+        <h2>Cuboid ROI</h2>
+        <label class="checkbox-row">
+          <input id="snapToGroundToggle" type="checkbox" checked />
+          <span>Snap to Ground</span>
+        </label>
+        <dl id="cuboidMeta" class="compact-metrics"></dl>
       </section>
 
       <section class="panel results-panel">
@@ -85,14 +94,15 @@
               <button id="navigateModeButton" class="ghost is-active">Navigate</button>
               <button id="pointPickModeButton">Point Pick</button>
               <button id="boxPickModeButton">Box Select</button>
+              <button id="cuboidModeButton">Cuboid Mode</button>
             </div>
             <div id="selectionModeLabel" class="floating-hint">Navigation mode active.</div>
           </div>
           <div class="floating-panel">
             <div class="floating-title">Actions</div>
             <div class="floating-actions">
-              <button id="clearPicksButton" class="ghost">Clear Picks</button>
-              <button id="analyzeButton" class="primary" disabled>Analyze Selected Object</button>
+              <button id="clearPicksButton" class="ghost">Clear Selection</button>
+              <button id="analyzeButton" class="primary" disabled>Analyze Selected Region</button>
             </div>
           </div>
         </div>
@@ -101,6 +111,6 @@
   </div>
 
   <script>window.__INITIAL_FILES__ = {{ files | tojson }};</script>
-  <script src="/static/app.js?v=20260324c"></script>
+  <script src="/static/app.js?v=20260324e"></script>
 </body>
 </html>

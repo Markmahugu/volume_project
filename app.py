@@ -1,7 +1,3 @@
-"""FastAPI application for browser-based object volume estimation."""
-
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Literal
 
@@ -11,7 +7,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from src.web_service import analyze_selected_region, get_preview_payload, list_point_cloud_files
+from src.web_service import (
+    analyze_selected_region,
+    get_cuboid_stats,
+    get_preview_payload,
+    list_point_cloud_files,
+)
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "web" / "static"
@@ -27,11 +28,20 @@ class SelectionBounds(BaseModel):
     max: list[float] = Field(min_length=3, max_length=3)
 
 
+class CuboidSelection(BaseModel):
+    center: list[float] = Field(min_length=3, max_length=3)
+    dimensions: list[float] = Field(min_length=3, max_length=3)
+    yaw: float = 0.0
+    snap_to_ground: bool = False
+    ground_z: float | None = None
+
+
 class AnalysisRequest(BaseModel):
     input_path: str
-    picked_points: list[list[float]] = Field(min_length=3)
-    selection_mode: Literal["polygon", "box"] = "polygon"
+    picked_points: list[list[float]] = Field(default_factory=list)
+    selection_mode: Literal["polygon", "box", "cuboid"] = "polygon"
     selection_bounds: SelectionBounds | None = None
+    selection_cuboid: CuboidSelection | None = None
     downsample_voxel: float = 0.02
     volume_voxel: float = 0.02
     dbscan_eps: float = 0.12
@@ -42,6 +52,11 @@ class AnalysisRequest(BaseModel):
     roi_padding_xy: float = 0.5
     roi_padding_z: float = 0.5
     cluster_index: int | None = None
+
+
+class CuboidStatsRequest(BaseModel):
+    input_path: str
+    selection_cuboid: CuboidSelection
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -58,6 +73,17 @@ def get_files() -> dict[str, list[str]]:
 def get_preview(input_path: str, voxel_size: float = 0.05) -> dict[str, object]:
     try:
         return get_preview_payload(input_path=input_path, voxel_size=voxel_size)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/cuboid-stats")
+def cuboid_stats(request: CuboidStatsRequest) -> dict[str, object]:
+    try:
+        return get_cuboid_stats(
+            input_path=request.input_path,
+            selection_cuboid=request.selection_cuboid.model_dump(),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -109,4 +135,3 @@ def analyze(request: AnalysisRequest) -> dict[str, object]:
         "selected_cloud": summary.selected_cloud_payload,
         "voxel_cloud": summary.voxel_cloud_payload,
     }
-
