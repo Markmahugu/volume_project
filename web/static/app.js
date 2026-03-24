@@ -8,6 +8,10 @@
   const pointPickModeButton = document.getElementById('pointPickModeButton');
   const boxPickModeButton = document.getElementById('boxPickModeButton');
   const cuboidModeButton = document.getElementById('cuboidModeButton');
+  const viewTopButton = document.getElementById('viewTopButton');
+  const viewBottomButton = document.getElementById('viewBottomButton');
+  const viewFrontButton = document.getElementById('viewFrontButton');
+  const viewSideButton = document.getElementById('viewSideButton');
   const clearPicksButton = document.getElementById('clearPicksButton');
   const analyzeButton = document.getElementById('analyzeButton');
   const selectionModeLabel = document.getElementById('selectionModeLabel');
@@ -484,6 +488,31 @@
     draw();
   }
 
+  function setCameraPreset(name) {
+    switch (name) {
+      case 'top':
+        state.yaw = 0;
+        state.pitch = 0;
+        break;
+      case 'bottom':
+        state.yaw = 0;
+        state.pitch = Math.PI;
+        break;
+      case 'front':
+        state.yaw = 0;
+        state.pitch = -Math.PI / 2;
+        break;
+      case 'side':
+        state.yaw = Math.PI / 2;
+        state.pitch = -Math.PI / 2;
+        break;
+      default:
+        return;
+    }
+    draw();
+    setStatus(`Switched to ${name} view.`);
+  }
+
   function convexHull2D(points) {
     const sorted = [...points].sort((left, right) => (left[0] - right[0]) || (left[1] - right[1]) || (left[2] - right[2]));
     if (sorted.length <= 1) return sorted;
@@ -651,12 +680,28 @@
     };
   }
 
-  function computeAxisDeltaFromMouse(originWorld, axisWorld, mouseDx, mouseDy) {
-    const axisScreen = projectWorldAxisToScreen(originWorld, axisWorld);
+  function computeAxisDeltaFromMouse(originWorld, axisWorld, mouseDx, mouseDy, referenceScreenVector = null) {
+    let axisScreen = projectWorldAxisToScreen(originWorld, axisWorld);
+    if (referenceScreenVector && dotVec2(axisScreen, referenceScreenVector) < 0) {
+      axisScreen = [-axisScreen[0], -axisScreen[1]];
+    }
     const axisScreenLength = lengthVec2(axisScreen);
     if (axisScreenLength < 1e-6) return 0;
     const axisScreenUnit = normalizeVec2(axisScreen);
     return dotVec2([mouseDx, mouseDy], axisScreenUnit) / axisScreenLength;
+  }
+
+  function solveScreenBasisDelta(originWorld, axisWorldA, axisWorldB, mouseDx, mouseDy) {
+    const a = projectWorldAxisToScreen(originWorld, axisWorldA);
+    const b = projectWorldAxisToScreen(originWorld, axisWorldB);
+    const det = (a[0] * b[1]) - (a[1] * b[0]);
+    if (Math.abs(det) < 1e-6) {
+      return { a: 0, b: 0 };
+    }
+    return {
+      a: ((mouseDx * b[1]) - (mouseDy * b[0])) / det,
+      b: ((a[0] * mouseDy) - (a[1] * mouseDx)) / det,
+    };
   }
 
   function getHandleDragConfig(handle) {
@@ -710,7 +755,9 @@
     const axisWorld = axis[0] !== 0 ? axes.x : axes.y;
     const axisSign = axis[0] !== 0 ? Math.sign(axis[0]) : Math.sign(axis[1]);
     const axisIndex = axis[0] !== 0 ? 0 : 1;
-    const delta = computeAxisDeltaFromMouse(cuboid.center, axisWorld, mouseDx, mouseDy) * axisSign;
+    const handleWorld = cuboidLocalToWorld(axisIndex === 0 ? [axisSign, 0, 0] : [0, axisSign, 0], cuboid.yaw);
+    const referenceScreenVector = projectWorldAxisToScreen(cuboid.center, handleWorld);
+    const delta = computeAxisDeltaFromMouse(cuboid.center, axisWorld, mouseDx, mouseDy, referenceScreenVector) * axisSign;
     if (Math.abs(delta) < 1e-6) return;
 
     const oldDimension = cuboid.dimensions[axisIndex];
@@ -754,9 +801,12 @@
   function applyCornerResize(axis, mouseDx, mouseDy, modifiers) {
     const cuboid = state.selectionCuboid;
     const axes = getCuboidWorldAxes(cuboid);
-    const deltaX = computeAxisDeltaFromMouse(cuboid.center, axes.x, mouseDx, mouseDy) * Math.sign(axis[0]);
-    const deltaY = computeAxisDeltaFromMouse(cuboid.center, axes.y, mouseDx, mouseDy) * Math.sign(axis[1]);
-    const deltaZ = computeAxisDeltaFromMouse(cuboid.center, axes.z, mouseDx, mouseDy) * Math.sign(axis[2]);
+    const refX = projectWorldAxisToScreen(cuboid.center, cuboidLocalToWorld([Math.sign(axis[0]), 0, 0], cuboid.yaw));
+    const refY = projectWorldAxisToScreen(cuboid.center, cuboidLocalToWorld([0, Math.sign(axis[1]), 0], cuboid.yaw));
+    const refZ = projectWorldAxisToScreen(cuboid.center, [0, 0, Math.sign(axis[2])]);
+    const deltaX = computeAxisDeltaFromMouse(cuboid.center, axes.x, mouseDx, mouseDy, refX) * Math.sign(axis[0]);
+    const deltaY = computeAxisDeltaFromMouse(cuboid.center, axes.y, mouseDx, mouseDy, refY) * Math.sign(axis[1]);
+    const deltaZ = computeAxisDeltaFromMouse(cuboid.center, axes.z, mouseDx, mouseDy, refZ) * Math.sign(axis[2]);
 
     if (modifiers.shiftKey) {
       const magnitude = Math.max(Math.abs(deltaX), Math.abs(deltaY), Math.abs(deltaZ));
@@ -779,14 +829,13 @@
     switch (state.cuboidDrag.kind) {
       case 'center': {
         if (!cuboid.snap_to_ground && event.shiftKey) {
-          const deltaZ = computeAxisDeltaFromMouse(cuboid.center, [0, 0, 1], mouseDx, mouseDy);
+          const deltaZ = computeAxisDeltaFromMouse(cuboid.center, [0, 0, 1], mouseDx, mouseDy, projectWorldAxisToScreen(cuboid.center, [0, 0, 1]));
           cuboid.center[2] += deltaZ;
         } else {
           const axes = getCuboidWorldAxes(cuboid);
-          const moveX = computeAxisDeltaFromMouse(cuboid.center, axes.x, mouseDx, mouseDy);
-          const moveY = computeAxisDeltaFromMouse(cuboid.center, axes.y, mouseDx, mouseDy);
-          const worldX = cuboidLocalToWorld([moveX, 0, 0], cuboid.yaw);
-          const worldY = cuboidLocalToWorld([0, moveY, 0], cuboid.yaw);
+          const move = solveScreenBasisDelta(cuboid.center, axes.x, axes.y, mouseDx, mouseDy);
+          const worldX = cuboidLocalToWorld([move.a, 0, 0], cuboid.yaw);
+          const worldY = cuboidLocalToWorld([0, move.b, 0], cuboid.yaw);
           moveCuboidByWorldDelta([worldX[0] + worldY[0], worldX[1] + worldY[1], 0]);
         }
         break;
@@ -1105,6 +1154,19 @@
     });
   }
 
+  if (viewTopButton) {
+    viewTopButton.addEventListener('click', () => setCameraPreset('top'));
+  }
+  if (viewBottomButton) {
+    viewBottomButton.addEventListener('click', () => setCameraPreset('bottom'));
+  }
+  if (viewFrontButton) {
+    viewFrontButton.addEventListener('click', () => setCameraPreset('front'));
+  }
+  if (viewSideButton) {
+    viewSideButton.addEventListener('click', () => setCameraPreset('side'));
+  }
+
   clearPicksButton.addEventListener('click', () => {
     state.pickedPoints = [];
     state.selectionBounds = null;
@@ -1148,3 +1210,12 @@
     setStatus('No .ply or .pcd files found in the workspace.', true);
   }
 })();
+
+
+
+
+
+
+
+
+

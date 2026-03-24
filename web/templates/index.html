@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>volume_project</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260324e" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260324k" />
 </head>
 <body>
   <div class="layout">
@@ -16,6 +16,9 @@
 
       <section class="panel">
         <h2>Dataset</h2>
+        {% if backend_error %}
+        <p class="hint">Backend unavailable: {{ backend_error }}</p>
+        {% endif %}
         <label>
           Point cloud
           <select id="fileSelect">
@@ -99,6 +102,15 @@
             <div id="selectionModeLabel" class="floating-hint">Navigation mode active.</div>
           </div>
           <div class="floating-panel">
+            <div class="floating-title">Views</div>
+            <div class="floating-actions">
+              <button id="viewTopButton" class="ghost view-button">Top</button>
+              <button id="viewBottomButton" class="ghost view-button">Bottom</button>
+              <button id="viewFrontButton" class="ghost view-button">Front</button>
+              <button id="viewSideButton" class="ghost view-button">Side</button>
+            </div>
+          </div>
+          <div class="floating-panel">
             <div class="floating-title">Actions</div>
             <div class="floating-actions">
               <button id="clearPicksButton" class="ghost">Clear Selection</button>
@@ -111,6 +123,6 @@
   </div>
 
   <script>window.__INITIAL_FILES__ = {{ files | tojson }};</script>
-  <script src="/static/app.js?v=20260324e"></script>
+  <script src="/static/app.js?v=20260324k"></script>
 </body>
 </html>
